@@ -1,31 +1,62 @@
-# Используем официальный Playwright образ как базовый
-# Он уже содержит браузеры и зависимости
-FROM mcr.microsoft.com/playwright:v1.45.0-focal AS base
+# Stage 1: Build
+FROM golang:1.21 AS builder
 
-# Установим Go внутри этого образа
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    golang-go git \
+WORKDIR /app
+
+# Копируем go.mod и go.sum для кэширования зависимостей
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Копируем весь проект
+COPY . .
+
+# Собираем бинарник
+RUN go build -o bot main.go
+
+# Stage 2: Runtime
+FROM debian:bookworm-slim
+
+# Устанавливаем зависимости для Playwright/Chromium
+RUN apt-get update && apt-get install -y \
+    wget \
+    ca-certificates \
+    fonts-liberation \
+    libasound2 \
+    libatk1.0-0 \
+    libc6 \
+    libcairo2 \
+    libcups2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libexpat1 \
+    libffi7 \
+    libgcc-s1 \
+    libglib2.0-0 \
+    libgtk-3-0 \
+    libnspr4 \
+    libnss3 \
+    libpango-1.0-0 \
+    libstdc++6 \
+    libx11-6 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxrandr2 \
+    libxrender1 \
+    libxss1 \
+    libxtst6 \
+    lsb-release \
+    xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Копируем модули
-COPY go.mod go.sum ./
-RUN go mod download
+# Копируем бинарник из builder
+COPY --from=builder /app/bot .
 
-# Копируем исходники
-COPY main.go ./
+# Добавляем Playwright
+RUN playwright install chromium
 
-# Собираем бинарь
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o insta-bot main.go
-
-# Финальный образ (можно использовать тот же base)
-FROM mcr.microsoft.com/playwright:v1.45.0-focal
-
-WORKDIR /app
-
-COPY --from=base /app/insta-bot /usr/local/bin/insta-bot
-
-ENV TELEGRAM_TOKEN=""
-
-ENTRYPOINT ["insta-bot"]
+# Запускаем бота
+CMD ["./bot"]
