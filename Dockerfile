@@ -1,62 +1,30 @@
-# Stage 1: Build
-FROM golang:1.21 AS builder
+# Используем официальный golang образ
+FROM golang:1.22-bullseye
 
+# Устанавливаем зависимости для Playwright Chromium
+RUN apt-get update && \
+    apt-get install -y wget gnupg libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libxcomposite1 libxrandr2 libxdamage1 libx11-xcb1 libxshmfence1 libxrender1 libgbm1 libpango-1.0-0 libasound2 libwoff1 fonts-liberation libxcb-dri3-0 libxkbcommon0 libxfixes3 libxi6 curl && \
+    rm -rf /var/lib/apt/lists/*
+
+# Устанавливаем Playwright CLI для установки браузеров
+RUN go install github.com/playwright-community/playwright-go/cmd/playwright@latest
+
+# Создаем рабочую директорию
 WORKDIR /app
 
-# Копируем go.mod и go.sum для кэширования зависимостей
+# Копируем файлы проекта
 COPY go.mod go.sum ./
 RUN go mod download
-
-# Копируем весь проект
 COPY . .
 
-# Собираем бинарник
-RUN go build -o bot main.go
+# Скачиваем браузеры для Playwright
+RUN playwright install
 
-# Stage 2: Runtime
-FROM debian:bookworm-slim
+# Компилируем Go-приложение
+RUN go build -o storeybot main.go
 
-# Устанавливаем зависимости для Playwright/Chromium
-RUN apt-get update && apt-get install -y \
-    wget \
-    ca-certificates \
-    fonts-liberation \
-    libasound2 \
-    libatk1.0-0 \
-    libc6 \
-    libcairo2 \
-    libcups2 \
-    libdbus-1-3 \
-    libdrm2 \
-    libexpat1 \
-    libffi7 \
-    libgcc-s1 \
-    libglib2.0-0 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libpango-1.0-0 \
-    libstdc++6 \
-    libx11-6 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxrandr2 \
-    libxrender1 \
-    libxss1 \
-    libxtst6 \
-    lsb-release \
-    xdg-utils \
-    && rm -rf /var/lib/apt/lists/*
+# Экспортируем порт (для бота необязательно)
+EXPOSE 8080
 
-WORKDIR /app
-
-# Копируем бинарник из builder
-COPY --from=builder /app/bot .
-
-# Добавляем Playwright
-RUN playwright install chromium
-
-# Запускаем бота
-CMD ["./bot"]
+# Запуск бота
+CMD ["./storeybot"]
