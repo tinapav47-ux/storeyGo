@@ -8,7 +8,6 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o storeygo main.go
 
 FROM ubuntu:22.04
 
-# Установка системных зависимостей
 RUN apt-get update && \
     apt-get install -y \
     wget \
@@ -29,14 +28,15 @@ RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
 
 WORKDIR /app
 
-# Установка Playwright 1.50.1 и драйвера
-RUN npm install -g playwright@1.50.1
-RUN npx playwright@1.50.1 install --with-deps chromium
+# Удаляем любые существующие установки Playwright и устанавливаем версию 1.50.1
+RUN npm cache clean --force && \
+    npm install -g playwright@1.50.1 && \
+    npx playwright@1.50.1 install --with-deps chromium
+
+# Установка playwright-go и драйвера
+RUN go install github.com/playwright-community/playwright-go@v0.5001.0 && \
+    /go/bin/playwright-go install --force --version 1.50.1
 
 COPY --from=builder /app/storeygo /app/storeygo
-
-# Явно устанавливаем драйвер для playwright-go
-RUN GO111MODULE=off go get github.com/playwright-community/playwright-go && \
-    /go/bin/playwright-go install --force --version 1.50.1
 
 CMD ["/app/storeygo"]
