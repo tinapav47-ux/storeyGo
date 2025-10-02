@@ -1,5 +1,5 @@
 # Используем официальный образ Go как базовый
-FROM golang:1.21 AS builder
+FROM golang:1.22 AS builder
 
 # Устанавливаем рабочую директорию
 WORKDIR /app
@@ -27,4 +27,5 @@ COPY --from=builder /app/storeygo /usr/local/bin/storeygo
 
 # Команда для запуска приложения
 CMD ["storeygo"]
+
 
