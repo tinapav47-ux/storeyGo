@@ -20,8 +20,8 @@ RUN apt-get update && \
 RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
     apt-get install -y nodejs
 
-# Установка конкретной версии Playwright (1.50.1)
-RUN npm install -g playwright@1.50.1
+# Установка версии Playwright которая У ТЕБЯ работает (1.55.1)
+RUN npm install -g playwright@1.55.1
 RUN npx playwright install-deps
 RUN npx playwright install chromium
 
