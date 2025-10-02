@@ -1,30 +1,32 @@
-# Используем официальный golang образ
-FROM golang:1.22-bullseye
+# Используем официальный образ Go как базовый
+FROM golang:1.21 AS builder
 
-# Устанавливаем зависимости для Playwright Chromium
-RUN apt-get update && \
-    apt-get install -y wget gnupg libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libxcomposite1 libxrandr2 libxdamage1 libx11-xcb1 libxshmfence1 libxrender1 libgbm1 libpango-1.0-0 libasound2 libwoff1 fonts-liberation libxcb-dri3-0 libxkbcommon0 libxfixes3 libxi6 curl && \
-    rm -rf /var/lib/apt/lists/*
-
-# Устанавливаем Playwright CLI для установки браузеров
-RUN go install github.com/playwright-community/playwright-go/cmd/playwright@latest
-
-# Создаем рабочую директорию
+# Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Копируем файлы проекта
+# Копируем go.mod и go.sum (если они есть)
 COPY go.mod go.sum ./
+
+# Загружаем зависимости
 RUN go mod download
+
+# Копируем исходный код
 COPY . .
 
-# Скачиваем браузеры для Playwright
-RUN playwright install
+# Компилируем приложение
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o storeygo main.go
 
-# Компилируем Go-приложение
-RUN go build -o storeybot main.go
+# Финальный образ на основе минимального образа с Playwright
+FROM mcr.microsoft.com/playwright:v1.44.0-jammy
 
-# Экспортируем порт (для бота необязательно)
-EXPOSE 8080
+# Устанавливаем необходимые зависимости для Playwright
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 
-# Запуск бота
-CMD ["./storeybot"]
+# Копируем скомпилированный бинарник из предыдущего этапа
+COPY --from=builder /app/storeygo /usr/local/bin/storeygo
+
+# Устанавливаем переменную окружения для токена Telegram (заглушка, задаётся при запуске)
+ENV TELEGRAM_TOKEN=""
+
+# Команда для запуска приложения
+CMD ["storeygo"]
