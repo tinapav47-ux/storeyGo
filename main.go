@@ -251,113 +251,127 @@ func sendMedia(bot *tgbotapi.BotAPI, chatID int64, folder string) {
 }
 
 func main() {
+    fmt.Println("[INFO] Starting application...")
 
-	    // Установка драйвера Playwright
+    // Установка драйвера Playwright
+    fmt.Println("[INFO] Installing Playwright driver...")
     err := playwright.Install(&playwright.RunOptions{
         SkipInstallBrowsers: true, // Браузеры уже установлены
     })
     if err != nil {
-        fmt.Printf("Failed to install playwright driver: %v\n", err)
+        fmt.Printf("[ERROR] Failed to install Playwright driver: %v\n", err)
+        panic(err)
     }
-	
-	botToken := os.Getenv("TELEGRAM_TOKEN")
-if botToken == "" {
-    panic("TELEGRAM_TOKEN environment variable is not set")
+    fmt.Println("[INFO] Playwright driver installed successfully")
+
+    // Получение токена Telegram
+    botToken := os.Getenv("TELEGRAM_TOKEN")
+    fmt.Printf("[INFO] TELEGRAM_TOKEN: %s\n", botToken)
+    if botToken == "" {
+        fmt.Println("[ERROR] TELEGRAM_TOKEN environment variable is not set")
+        panic("TELEGRAM_TOKEN environment variable is not set")
+    }
+
+    // Инициализация Telegram бота
+    fmt.Println("[INFO] Initializing Telegram bot...")
+    bot, err := tgbotapi.NewBotAPI(botToken)
+    if err != nil {
+        fmt.Printf("[ERROR] Failed to initialize Telegram bot: %v\n", err)
+        panic(err)
+    }
+    fmt.Printf("[INFO] Telegram bot initialized successfully, username: @%s\n", bot.Self.UserName)
+
+    // Запуск горутины отправки сообщений
+    fmt.Println("[INFO] Starting media sender goroutine...")
+    go mediaSender(bot)
+    fmt.Println("[INFO] Media sender goroutine started")
+
+    // Настройка получения обновлений
+    u := tgbotapi.NewUpdate(0)
+    u.Timeout = 60
+    fmt.Println("[INFO] Starting to listen for Telegram updates...")
+    updates := bot.GetUpdatesChan(u)
+
+    for update := range updates {
+        fmt.Printf("[INFO] Received update: %+v\n", update)
+        if update.Message == nil {
+            continue
+        }
+
+        chatID := update.Message.Chat.ID
+        text := strings.TrimSpace(update.Message.Text)
+
+        // --- Обработка команды /view ---
+        if text == "/view" {
+            waitingForUsername[chatID] = true
+            bot.Send(tgbotapi.NewMessage(chatID, "Sent username:"))
+            continue
+        }
+
+        // --- Если ждем username от пользователя ---
+        if waitingForUsername[chatID] {
+            username := text
+            // Проверка на латиницу
+            validUsername := regexp.MustCompile(`^[A-Za-z0-9._]+$`)
+            if !validUsername.MatchString(username) {
+                bot.Send(tgbotapi.NewMessage(chatID, "Invalid username. Use only Latin letters, numbers, periods, and underscores."))
+                continue // останавливаем дальнейшую обработку
+            }
+            waitingForUsername[chatID] = false // сбрасываем после успешной проверки
+
+            bot.Send(tgbotapi.NewMessage(chatID, "Processing, please wait..."))
+
+            // Горутина с семафором
+            go func(chatID int64, username string) {
+                semaphore <- struct{}{}        // захватываем слот
+                defer func() { <-semaphore }() // освобождаем слот после работы
+
+                media, message, err := fetchMediaLinks(username)
+                if err != nil {
+                    sendQueue <- func() {
+                        bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Error: %v", err)))
+                    }
+                    return
+                }
+
+                if message != "" {
+                    sendQueue <- func() {
+                        bot.Send(tgbotapi.NewMessage(chatID, message))
+                    }
+                    return
+                }
+
+                if len(media) == 0 {
+                    sendQueue <- func() {
+                        bot.Send(tgbotapi.NewMessage(chatID, "Media not found"))
+                    }
+                    return
+                }
+
+                folder := username
+                for i, item := range media {
+                    url := item["url"]
+                    mtype := item["type"]
+                    ext := "jpg"
+                    if mtype == "video" {
+                        ext = "mp4"
+                    }
+                    filename := fmt.Sprintf("%d.%s", i+1, ext)
+                    if err := saveFile(url, folder, filename); err != nil {
+                        sendQueue <- func() {
+                            bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Failed to download %s", url)))
+                        }
+                    }
+                }
+
+                sendMedia(bot, chatID, folder)
+            }(chatID, username)
+
+            continue
+        }
+        // --- Если пользователь пишет что-то без /view ---
+        bot.Send(tgbotapi.NewMessage(chatID, "First use the /view command and then enter username."))
+    }
 }
 
-bot, err := tgbotapi.NewBotAPI(botToken)
-if err != nil {
-    panic(err)
-}
-
-
-	go mediaSender(bot) // запускаем горутину очереди отправки
-
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
-	updates := bot.GetUpdatesChan(u)
-
-	for update := range updates {
-		if update.Message == nil {
-			continue
-		}
-
-		chatID := update.Message.Chat.ID
-		text := strings.TrimSpace(update.Message.Text)
-
-		// --- Обработка команды /view ---
-		if text == "/view" {
-			waitingForUsername[chatID] = true
-			bot.Send(tgbotapi.NewMessage(chatID, "Sent username:"))
-			continue
-		}
-
-		// --- Если ждем username от пользователя ---
-		if waitingForUsername[chatID] {
-			username := text
-			// ----------- Добавляем проверку на латиницу ---------
-			validUsername := regexp.MustCompile(`^[A-Za-z0-9._]+$`)
-			if !validUsername.MatchString(username) {
-				bot.Send(tgbotapi.NewMessage(chatID, "Invalid username. Use only Latin letters, numbers, periods, and underscores."))
-				continue // останавливаем дальнейшую обработку
-			}
-			// ----------- Добавляем проверку на латиницу ---------
-
-			waitingForUsername[chatID] = false // <- сбрасываем только после успешной проверки
-
-			bot.Send(tgbotapi.NewMessage(chatID, "Processing, please wait..."))
-
-			// --- Горутин с семафором ---
-			go func(chatID int64, username string) {
-				semaphore <- struct{}{}        // захватываем слот
-				defer func() { <-semaphore }() // освобождаем слот после работы
-				// --- Горутин с семафором ---
-
-				media, message, err := fetchMediaLinks(username)
-				if err != nil {
-					sendQueue <- func() {
-						bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Error: %v", err)))
-					}
-					return
-				}
-
-				if message != "" {
-					sendQueue <- func() {
-						bot.Send(tgbotapi.NewMessage(chatID, message))
-					}
-					return
-				}
-
-				if len(media) == 0 {
-					sendQueue <- func() {
-						bot.Send(tgbotapi.NewMessage(chatID, "Media not found"))
-					}
-					return
-				}
-
-				folder := username
-				for i, item := range media {
-					url := item["url"]
-					mtype := item["type"]
-					ext := "jpg"
-					if mtype == "video" {
-						ext = "mp4"
-					}
-					filename := fmt.Sprintf("%d.%s", i+1, ext)
-					if err := saveFile(url, folder, filename); err != nil {
-						sendQueue <- func() {
-							bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Failed to download %s", url)))
-						}
-					}
-				}
-
-				sendMedia(bot, chatID, folder)
-			}(chatID, username)
-
-			continue
-		}
-		// --- Если пользователь пишет что-то без /view ---
-		bot.Send(tgbotapi.NewMessage(chatID, "First use the /view command and then enter username."))
-	}
-}
 
