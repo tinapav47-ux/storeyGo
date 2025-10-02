@@ -28,8 +28,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
 
 WORKDIR /app
 
-# Удаляем любые существующие установки Playwright и устанавливаем версию 1.50.1
+# Очистка кэша npm и удаление любых существующих версий Playwright
 RUN npm cache clean --force && \
+    npm uninstall -g playwright || true && \
     npm install -g playwright@1.50.1 && \
     npx playwright@1.50.1 install --with-deps chromium
 
