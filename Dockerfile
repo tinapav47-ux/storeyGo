@@ -35,8 +35,8 @@ RUN npm cache clean --force && \
     npx playwright@1.50.1 install --with-deps chromium
 
 # Установка playwright-go (библиотека) и CLI-инструмента
-RUN go install github.com/playwright-community/playwright-go@v0.5001.0
-RUN go install github.com/playwright-community/playwright-go/cmd/playwright@v0.5001.0
+RUN go install github.com/playwright-community/playwright-go@latest
+RUN go install github.com/playwright-community/playwright-go/cmd/playwright@latest
 
 # Установка драйвера Playwright 1.50.1 через CLI
 RUN /go/bin/playwright install --with-deps chromium
@@ -44,4 +44,5 @@ RUN /go/bin/playwright install --with-deps chromium
 COPY --from=builder /app/storeygo /app/storeygo
 
 CMD ["/app/storeygo"]
+
 
