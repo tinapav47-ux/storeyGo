@@ -28,9 +28,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
 
 WORKDIR /app
 
-# Устанавливаем только системные зависимости и Chromium
-RUN npx playwright install-deps
-RUN npx playwright install chromium
+# Установка Playwright версии 1.50.1 и Chromium
+RUN npm install -g playwright@1.50.1
+RUN npx playwright@1.50.1 install chromium
 
 COPY --from=builder /app/storeygo /app/storeygo
 
