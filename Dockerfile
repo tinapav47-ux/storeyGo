@@ -16,14 +16,14 @@ RUN apt-get update && \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Установка Node.js и Playwright
+# Установка Node.js
 RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
     apt-get install -y nodejs
 
-# Установка Playwright
-RUN npm install -g playwright@1.50.1 && \
-    npx playwright install-deps && \
-    npx playwright install chromium
+# Установка конкретной версии Playwright (1.50.1)
+RUN npm install -g playwright@1.50.1
+RUN npx playwright install-deps
+RUN npx playwright install chromium
 
 WORKDIR /app
 COPY --from=builder /app/storeygo /app/storeygo
