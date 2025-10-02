@@ -21,11 +21,13 @@ FROM mcr.microsoft.com/playwright:v1.44.0-jammy
 
 # Устанавливаем необходимые зависимости для Playwright
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN npx playwright install --with-deps
 
 # Копируем скомпилированный бинарник из предыдущего этапа
 COPY --from=builder /app/storeygo /usr/local/bin/storeygo
 
 # Команда для запуска приложения
 CMD ["storeygo"]
+
 
 
