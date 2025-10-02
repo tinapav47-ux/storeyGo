@@ -25,8 +25,6 @@ RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/
 # Копируем скомпилированный бинарник из предыдущего этапа
 COPY --from=builder /app/storeygo /usr/local/bin/storeygo
 
-# Устанавливаем переменную окружения для токена Telegram (заглушка, задаётся при запуске)
-ENV TELEGRAM_TOKEN=""
-
 # Команда для запуска приложения
 CMD ["storeygo"]
+
