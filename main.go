@@ -256,7 +256,7 @@ func main() {
     // Установка драйвера Playwright
     fmt.Println("[INFO] Installing Playwright driver...")
     err := playwright.Install(&playwright.RunOptions{
-        SkipInstallBrowsers: true, // Браузеры уже установлены
+        SkipInstallBrowsers: true,
     })
     if err != nil {
         fmt.Printf("[ERROR] Failed to install Playwright driver: %v\n", err)
@@ -303,6 +303,7 @@ func main() {
 
         // --- Обработка команды /view ---
         if text == "/view" {
+            fmt.Printf("[INFO] Received /view command from chat %d\n", chatID)
             waitingForUsername[chatID] = true
             bot.Send(tgbotapi.NewMessage(chatID, "Sent username:"))
             continue
@@ -311,23 +312,27 @@ func main() {
         // --- Если ждем username от пользователя ---
         if waitingForUsername[chatID] {
             username := text
+            fmt.Printf("[INFO] Received username: %s\n", username)
             // Проверка на латиницу
             validUsername := regexp.MustCompile(`^[A-Za-z0-9._]+$`)
             if !validUsername.MatchString(username) {
+                fmt.Printf("[ERROR] Invalid username: %s\n", username)
                 bot.Send(tgbotapi.NewMessage(chatID, "Invalid username. Use only Latin letters, numbers, periods, and underscores."))
-                continue // останавливаем дальнейшую обработку
+                continue
             }
-            waitingForUsername[chatID] = false // сбрасываем после успешной проверки
+            waitingForUsername[chatID] = false
 
             bot.Send(tgbotapi.NewMessage(chatID, "Processing, please wait..."))
 
             // Горутина с семафором
             go func(chatID int64, username string) {
-                semaphore <- struct{}{}        // захватываем слот
-                defer func() { <-semaphore }() // освобождаем слот после работы
+                semaphore <- struct{}{}
+                defer func() { <-semaphore }()
+                fmt.Printf("[INFO] Processing username %s for chat %d\n", username, chatID)
 
                 media, message, err := fetchMediaLinks(username)
                 if err != nil {
+                    fmt.Printf("[ERROR] Failed to fetch media for %s: %v\n", username, err)
                     sendQueue <- func() {
                         bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Error: %v", err)))
                     }
@@ -335,6 +340,7 @@ func main() {
                 }
 
                 if message != "" {
+                    fmt.Printf("[INFO] Message for %s: %s\n", username, message)
                     sendQueue <- func() {
                         bot.Send(tgbotapi.NewMessage(chatID, message))
                     }
@@ -342,6 +348,7 @@ func main() {
                 }
 
                 if len(media) == 0 {
+                    fmt.Println("[INFO] No media found for", username)
                     sendQueue <- func() {
                         bot.Send(tgbotapi.NewMessage(chatID, "Media not found"))
                     }
@@ -357,21 +364,26 @@ func main() {
                         ext = "mp4"
                     }
                     filename := fmt.Sprintf("%d.%s", i+1, ext)
+                    fmt.Printf("[INFO] Downloading %s to %s/%s\n", url, folder, filename)
                     if err := saveFile(url, folder, filename); err != nil {
+                        fmt.Printf("[ERROR] Failed to download %s: %v\n", url, err)
                         sendQueue <- func() {
                             bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Failed to download %s", url)))
                         }
                     }
                 }
 
+                fmt.Printf("[INFO] Sending media for %s to chat %d\n", username, chatID)
                 sendMedia(bot, chatID, folder)
             }(chatID, username)
 
             continue
         }
         // --- Если пользователь пишет что-то без /view ---
+        fmt.Printf("[INFO] Invalid command from chat %d: %s\n", chatID, text)
         bot.Send(tgbotapi.NewMessage(chatID, "First use the /view command and then enter username."))
     }
 }
+
 
 
