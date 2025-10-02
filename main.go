@@ -251,7 +251,16 @@ func sendMedia(bot *tgbotapi.BotAPI, chatID int64, folder string) {
 }
 
 func main() {
-botToken := os.Getenv("TELEGRAM_TOKEN")
+
+	    // Установка драйвера Playwright
+    err := playwright.Install(&playwright.RunOptions{
+        SkipInstallBrowsers: true, // Браузеры уже установлены
+    })
+    if err != nil {
+        fmt.Printf("Failed to install playwright driver: %v\n", err)
+    }
+	
+	botToken := os.Getenv("TELEGRAM_TOKEN")
 if botToken == "" {
     panic("TELEGRAM_TOKEN environment variable is not set")
 }
@@ -351,3 +360,4 @@ if err != nil {
 		bot.Send(tgbotapi.NewMessage(chatID, "First use the /view command and then enter username."))
 	}
 }
+
