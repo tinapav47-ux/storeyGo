@@ -16,9 +16,17 @@ Telegram-бот, который скачивает истории (stories) че
 
 ---
 
+## Технологии:
+
+- Язык: Go 1.22
+- Telegram Bot API: [github.com/go-telegram-bot-api/telegram-bot-api/v5](https://github.com/go-telegram-bot-api/telegram-bot-api)
+- Автоматизация браузера: Playwright for Go (автоматизирует Chrome для парсинга)
+- Контейнеризация: Docker
+- Целевая платформа: Linux ARM64 (Raspberry Pi)
+
+
 ## Используемые версии
 
-- Go: `1.21` (arm64, Raspberry Pi)  
 - [playwright-go](https://github.com/playwright-community/playwright-go): `v0.5001.0`  
 - [go-telegram-bot-api](https://github.com/go-telegram-bot-api/telegram-bot-api): `v5.5.1`  
 
@@ -78,6 +86,7 @@ docker logs -f storeygo
 - Исходно бот был на Python и потреблял много ресурсов.
 - Переписанный на Go бот показывает меньшую нагрузку и позволяет изучать производительность.
 - Docker обеспечивает изоляцию и упрощает запуск на Raspberry Pi.
+
 
 
 
