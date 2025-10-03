@@ -106,11 +106,12 @@ func fetchMediaLinks(username string, bot *tgbotapi.BotAPI, chatID int64) ([]map
 	}
 
 	// Исправлено: добавлен playwright.Float(10000) и лог ошибки
-	if err := page.WaitForLoadState("networkidle", playwright.PageWaitForLoadStateOptions{
-		Timeout: playwright.Float(10000),
-	}); err != nil {
-		log.Printf("[DEBUG] WaitForLoadState error for username %s: %v", username, err)
-	}
+if err := page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
+    State:   playwright.WaitUntilStateNetworkidle,
+    Timeout: playwright.Float(10000),
+}); err != nil {
+    log.Printf("[DEBUG] WaitForLoadState error for username %s: %v", username, err)
+}
 
 	textEl, err := page.WaitForSelector("div.tab-content p.text-center", playwright.PageWaitForSelectorOptions{
 		Timeout: playwright.Float(5000),
@@ -301,3 +302,4 @@ func main() {
 		}
 	}
 }
+
