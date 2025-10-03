@@ -37,7 +37,8 @@ git checkout main
 git pull origin main
 ```
 3. Остановить и удалить старый контейнер (если он запущен)
-```docker stop storeygo || true
+```
+docker stop storeygo || true
 docker rm storeygo || true
 ```
 4. Пересобрать образ
@@ -77,5 +78,6 @@ docker logs -f storeygo
 - Исходно бот был на Python и потреблял много ресурсов.
 - Переписанный на Go бот показывает меньшую нагрузку и позволяет изучать производительность.
 - Docker обеспечивает изоляцию и упрощает запуск на Raspberry Pi.
+
 
 
