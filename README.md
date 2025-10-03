@@ -24,12 +24,36 @@ Telegram-бот, который скачивает истории (stories) че
 
 ---
 
-## Команды в termimal
+## Команды в termimal после обновления файлов репозитории
 
-- github.com/playwright-community/playwright-go v0.5001.0
->>go list -m all | Select-String playwright
--  github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
->>go list -m all | Select-String telegram
+1. Перейти в папку проекта
+```
+cd ~/storeyGo
+```
+2. Подтянуть последние изменения из ветки main
+```
+git fetch origin
+git checkout main
+git pull origin main
+```
+3. Остановить и удалить старый контейнер (если он запущен)
+```docker stop storeygo || true
+docker rm storeygo || true
+```
+4. Пересобрать образ
+```
+docker build -t storeygo .
+```
+
+5. Запустить контейнер заново с токеном
+```docker run -d --name storeygo \
+  -e TELEGRAM_TOKEN="TOKEN" \
+  storeygo
+```
+6. Смотреть логи (убедиться, что бот запустился)
+```
+docker logs -f storeygo
+```
 
 
 ## Пользование
@@ -52,3 +76,4 @@ Telegram-бот, который скачивает истории (stories) че
 - Исходно бот был на Python и потреблял много ресурсов.
 - Переписанный на Go бот показывает меньшую нагрузку и позволяет изучать производительность.
 - Docker обеспечивает изоляцию и упрощает запуск на Raspberry Pi.
+
