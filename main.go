@@ -122,7 +122,7 @@ func fetchMediaLinks(username string, bot *tgbotapi.BotAPI, chatID int64) ([]map
 	if _, err := page.WaitForSelector(".story", playwright.PageWaitForSelectorOptions{
 		Timeout: playwright.Float(float64(timeoutWait.Milliseconds())),
 	}); err != nil {
-				bot.Send(tgbotapi.NewMessage(chatID, "No stories found"))
+		bot.Send(tgbotapi.NewMessage(chatID, "No stories found"))
 		return nil, nil // Медиа не найдено 
 	}
 
@@ -155,6 +155,10 @@ func fetchMediaLinks(username string, bot *tgbotapi.BotAPI, chatID int64) ([]map
 			if sourceEl != nil {
 				src, _ := sourceEl.GetAttribute("src")
 				if src != "" {
+					// ДОБАВЛЕНО: Преобразование относительного пути в абсолютный URL
+					if strings.HasPrefix(src, "/") {
+						src = baseSite + src
+					}
 					found = append(found, map[string]string{
 						"type":       "video",
 						"url":        src,
@@ -169,6 +173,10 @@ func fetchMediaLinks(username string, bot *tgbotapi.BotAPI, chatID int64) ([]map
 		if imgEl != nil {
 			src, _ := imgEl.GetAttribute("src")
 			if src != "" {
+				// ДОБАВЛЕНО: Преобразование относительного пути в абсолютный URL
+				if strings.HasPrefix(src, "/") {
+					src = baseSite + src
+				}
 				found = append(found, map[string]string{
 					"type":       "image",
 					"url":        src,
@@ -314,4 +322,5 @@ func main() {
 		}
 	}
 }
+
 
