@@ -1,8 +1,10 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net/http"
 	"os"
@@ -11,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/playwright-community/playwright-go"
 )
 
@@ -23,19 +25,9 @@ var userAgents = []string{
 }
 
 const (
-	baseSite              = "https://insta-stories.ru"
-	timeoutGoto           = 30 * time.Second
-	timeoutWait           = 10 * time.Second
-	maxConcurrentRequests = 10  // Максимум одновременных запросов к Playwright/боту
-	sendQueueBuffer       = 100 // размер очереди отправки сообщений
-
-)
-
-var (
-	waitingForUsername = map[int64]bool{} // chat_id -> ждем username
-	semaphore          = make(chan struct{}, maxConcurrentRequests)
-	sendQueue          = make(chan func(), sendQueueBuffer) // очередь отправки сообщений
-
+	baseSite    = "https://insta-stories.ru"
+	timeoutGoto = 30 * time.Second
+	timeoutWait = 10 * time.Second
 )
 
 func getRandomUserAgent() string {
@@ -43,7 +35,13 @@ func getRandomUserAgent() string {
 	return userAgents[rand.Intn(len(userAgents))]
 }
 
-// saveFile скачивает медиа в папку
+// validateInstagramUsername проверяет, соответствует ли username правилам Instagram
+func validateInstagramUsername(username string) bool {
+	// Instagram username: 1-30 символов, только латинские буквы, цифры, подчёркивания и точки
+	regex := regexp.MustCompile(`^[a-zA-Z0-9._]{1,30}$`)
+	return regex.MatchString(username) && !strings.ContainsAny(username, " ")
+}
+
 func saveFile(url, folder, filename string) error {
 	if err := os.MkdirAll(folder, os.ModePerm); err != nil {
 		return err
@@ -73,11 +71,13 @@ func saveFile(url, folder, filename string) error {
 	return err
 }
 
-// fetchMediaLinks парсит сторис и возвращает ссылки на картинки и видео
-func fetchMediaLinks(username string) ([]map[string]string, string, error) {
-	pw, err := playwright.Run()
+func fetchMediaLinks(username string, bot *tgbotapi.BotAPI, chatID int64) ([]map[string]string, error) {
+	pw, err := playwright.Run(&playwright.RunOptions{
+		Verbose: true,
+	})
 	if err != nil {
-		return nil, "", err
+		bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("[ERROR] Failed to start Playwright: %v", err)))
+		return nil, err
 	}
 	defer pw.Stop()
 
@@ -85,7 +85,8 @@ func fetchMediaLinks(username string) ([]map[string]string, string, error) {
 		Headless: playwright.Bool(true),
 	})
 	if err != nil {
-		return nil, "", err
+		bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("[ERROR] Failed to launch browser: %v", err)))
+		return nil, err
 	}
 	defer browser.Close()
 
@@ -93,43 +94,43 @@ func fetchMediaLinks(username string) ([]map[string]string, string, error) {
 		UserAgent: playwright.String(getRandomUserAgent()),
 	})
 	if err != nil {
-		return nil, "", err
+		bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("[ERROR] Failed to create page: %v", err)))
+		return nil, err
 	}
 
 	url := fmt.Sprintf("%s/ru/%s", baseSite, username)
-	fmt.Println("[INFO] Загружаю страницу:", url)
-
 	if _, err := page.Goto(url, playwright.PageGotoOptions{
 		Timeout: playwright.Float(float64(timeoutGoto.Milliseconds())),
 	}); err != nil {
-		return nil, "", err
+		bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("[ERROR] Failed to load page: %v", err)))
+		return nil, err
 	}
 
-	// Проверка текста p.text-center
-	textEl, _ := page.WaitForSelector("div.tab-content p.text-center", playwright.PageWaitForSelectorOptions{
+	// Проверка на текст в div.tab-content > p.text-center
+	textEl, err := page.WaitForSelector("div.tab-content p.text-center", playwright.PageWaitForSelectorOptions{
 		Timeout: playwright.Float(5000),
 	})
-	if textEl != nil {
+	if err != nil {
+		// таймаут — элемента нет, продолжаем
+	} else if textEl != nil {
 		message, _ := textEl.InnerText()
 		message = strings.TrimSpace(message)
 		if message != "" {
-			return nil, message, nil
+			bot.Send(tgbotapi.NewMessage(chatID, message)) // Сообщение от сайта
+			return nil, nil
 		}
 	}
 
-	// Берём только первый блок актуальных историй
-	container, err := page.QuerySelector("div.stories-container")
-	if err != nil || container == nil {
-		return nil, "No relevant stories found", nil
+	if _, err := page.WaitForSelector(".story", playwright.PageWaitForSelectorOptions{
+		Timeout: playwright.Float(float64(timeoutWait.Milliseconds())),
+	}); err != nil {
+		return nil, nil // Медиа не найдено — ничего не отправляем
 	}
 
-	stories, err := container.QuerySelectorAll("div.story")
+	stories, err := page.QuerySelectorAll(".story")
 	if err != nil {
-		return nil, "", err
-	}
-
-	if len(stories) == 0 {
-		return nil, "The user has no current stories.", nil
+		bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("[ERROR] Error fetching stories: %v", err)))
+		return nil, err
 	}
 
 	var found []map[string]string
@@ -139,22 +140,18 @@ func fetchMediaLinks(username string) ([]map[string]string, string, error) {
 			continue
 		}
 
-		// Видео
+		// Обработка видео
 		mediaBlock, _ := mediaBox.QuerySelector(".media")
 		if mediaBlock != nil {
 			btn, _ := mediaBlock.QuerySelector(`button[aria-label="Play video"]`)
 			if btn != nil {
 				btn.Click(playwright.ElementHandleClickOptions{Force: playwright.Bool(true)})
-				page.WaitForTimeout(3000)
+				page.WaitForTimeout(5000)
 			}
 
 			sourceEl, _ := mediaBlock.QuerySelector(`source[type="video/mp4"]`)
 			if sourceEl == nil {
-				// Ждём до 5 секунд пока появится
-				sourceEl, _ = mediaBlock.WaitForSelector(`source[type="video/mp4"]`, playwright.ElementHandleWaitForSelectorOptions{
-					Timeout: playwright.Float(5000),
-					State:   playwright.WaitForSelectorStateAttached, // <- правильный тип
-				})
+				sourceEl, _ = story.QuerySelector(`source[type="video/mp4"]`)
 			}
 
 			if sourceEl != nil {
@@ -170,7 +167,7 @@ func fetchMediaLinks(username string) ([]map[string]string, string, error) {
 			}
 		}
 
-		// Картинка
+		// Обработка картинки
 		imgEl, _ := mediaBox.QuerySelector("img")
 		if imgEl != nil {
 			src, _ := imgEl.GetAttribute("src")
@@ -180,210 +177,133 @@ func fetchMediaLinks(username string) ([]map[string]string, string, error) {
 					"url":        src,
 					"storyIndex": fmt.Sprintf("%d", i+1),
 				})
+				continue
 			}
 		}
 	}
 
-	return found, "", nil
-}
-
-func mediaSender(bot *tgbotapi.BotAPI) {
-	for job := range sendQueue {
-		job()
-	}
-}
-
-// sendMedia отправляет медиа в Telegram и удаляет папку после отправки
-func sendMedia(bot *tgbotapi.BotAPI, chatID int64, folder string) {
-	files, _ := os.ReadDir(folder)
-	var media []interface{}
-	count := 0
-
-	for _, f := range files {
-		path := filepath.Join(folder, f.Name())
-		if strings.HasSuffix(f.Name(), ".jpg") || strings.HasSuffix(f.Name(), ".png") {
-			photo := tgbotapi.NewInputMediaPhoto(tgbotapi.FilePath(path))
-			media = append(media, photo)
-			count++
-			if count == 10 {
-				bot.SendMediaGroup(tgbotapi.MediaGroupConfig{
-					ChatID: chatID,
-					Media:  media,
-				})
-				media = nil
-				count = 0
-			}
-		}
-	}
-	if len(media) > 0 {
-		tempMedia := media
-		sendQueue <- func() {
-			bot.SendMediaGroup(tgbotapi.MediaGroupConfig{
-				ChatID: chatID,
-				Media:  tempMedia,
-			})
-		}
-	}
-
-	for _, f := range files {
-		if strings.HasSuffix(f.Name(), ".mp4") {
-			path := filepath.Join(folder, f.Name())
-			tempPath := path
-			sendQueue <- func() {
-				video := tgbotapi.NewVideo(chatID, tgbotapi.FilePath(tempPath))
-				bot.Send(video)
-			}
-		}
-	}
-
-	sendQueue <- func() {
-		bot.Send(tgbotapi.NewMessage(chatID, "Done."))
-	}
-
-	// Удаляем папку со всеми файлами
-	sendQueue <- func() {
-		if err := os.RemoveAll(folder); err != nil {
-			fmt.Printf("[ERROR] Не удалось удалить папку %s: %v\n", folder, err)
-		} else {
-			fmt.Printf("[INFO] Папка %s успешно удалена\n", folder)
-		}
-	}
+	return found, nil
 }
 
 func main() {
-    fmt.Println("[INFO] Starting application...")
+	// Парсинг токена из флага командной строки
+	tokenPtr := flag.String("token", "", "Telegram Bot Token")
+	flag.Parse()
 
-    // Установка драйвера Playwright
-    fmt.Println("[INFO] Installing Playwright driver...")
-    err := playwright.Install(&playwright.RunOptions{
-        SkipInstallBrowsers: true,
-    })
-    if err != nil {
-        fmt.Printf("[ERROR] Failed to install Playwright driver: %v\n", err)
-        panic(err)
-    }
-    fmt.Println("[INFO] Playwright driver installed successfully")
+	if *tokenPtr == "" {
+		log.Fatal("Error: Telegram Bot Token is required. Use -token flag.")
+	}
 
-    // Получение токена Telegram
-    botToken := os.Getenv("TELEGRAM_TOKEN")
-    fmt.Printf("[INFO] TELEGRAM_TOKEN: %s\n", botToken)
-    if botToken == "" {
-        fmt.Println("[ERROR] TELEGRAM_TOKEN environment variable is not set")
-        panic("TELEGRAM_TOKEN environment variable is not set")
-    }
+	// Инициализация Telegram-бота
+	bot, err := tgbotapi.NewBotAPI(*tokenPtr)
+	if err != nil {
+		log.Fatalf("[ERROR] Failed to initialize Telegram bot: %v", err)
+	}
+	bot.Debug = false // Отключить отладочный режим
 
-    // Инициализация Telegram бота
-    fmt.Println("[INFO] Initializing Telegram bot...")
-    bot, err := tgbotapi.NewBotAPI(botToken)
-    if err != nil {
-        fmt.Printf("[ERROR] Failed to initialize Telegram bot: %v\n", err)
-        panic(err)
-    }
-    fmt.Printf("[INFO] Telegram bot initialized successfully, username: @%s\n", bot.Self.UserName)
+	log.Printf("[INFO] Bot %s started", bot.Self.UserName)
 
-    // Запуск горутины отправки сообщений
-    fmt.Println("[INFO] Starting media sender goroutine...")
-    go mediaSender(bot)
-    fmt.Println("[INFO] Media sender goroutine started")
+	// Настройка обновлений
+	u := tgbotapi.NewUpdate(0)
+	u.Timeout = 60
 
-    // Настройка получения обновлений
-    u := tgbotapi.NewUpdate(0)
-    u.Timeout = 60
-    fmt.Println("[INFO] Starting to listen for Telegram updates...")
-    updates := bot.GetUpdatesChan(u)
+	updates := bot.GetUpdatesChan(u)
 
-    for update := range updates {
-        fmt.Printf("[INFO] Received update: %+v\n", update)
-        if update.Message == nil {
-            continue
-        }
+	// Карта для хранения состояния ожидания username
+	waitingForUsername := make(map[int64]bool)
 
-        chatID := update.Message.Chat.ID
-        text := strings.TrimSpace(update.Message.Text)
+	for update := range updates {
+		if update.Message == nil {
+			continue
+		}
 
-        // --- Обработка команды /view ---
-        if text == "/view" {
-            fmt.Printf("[INFO] Received /view command from chat %d\n", chatID)
-            waitingForUsername[chatID] = true
-            bot.Send(tgbotapi.NewMessage(chatID, "Sent username:"))
-            continue
-        }
+		chatID := update.Message.Chat.ID
+		username := strings.TrimSpace(update.Message.Text)
 
-        // --- Если ждем username от пользователя ---
-        if waitingForUsername[chatID] {
-            username := text
-            fmt.Printf("[INFO] Received username: %s\n", username)
-            // Проверка на латиницу
-            validUsername := regexp.MustCompile(`^[A-Za-z0-9._]+$`)
-            if !validUsername.MatchString(username) {
-                fmt.Printf("[ERROR] Invalid username: %s\n", username)
-                bot.Send(tgbotapi.NewMessage(chatID, "Invalid username. Use only Latin letters, numbers, periods, and underscores."))
-                continue
-            }
-            waitingForUsername[chatID] = false
+		// Проверка команды /view
+		if update.Message.Text == "/view" {
+			waitingForUsername[chatID] = true
+			bot.Send(tgbotapi.NewMessage(chatID, "Sent username:"))
+			continue
+		}
 
-            bot.Send(tgbotapi.NewMessage(chatID, "Processing, please wait..."))
+		// Если бот ожидает username
+		if waitingForUsername[chatID] {
+			// Проверка формата username
+			if !validateInstagramUsername(username) {
+				bot.Send(tgbotapi.NewMessage(chatID, "Invalid username format. Use only Latin letters, numbers, underscores, and dots."))
+				waitingForUsername[chatID] = false
+				continue
+			}
 
-            // Горутина с семафором
-            go func(chatID int64, username string) {
-                semaphore <- struct{}{}
-                defer func() { <-semaphore }()
-                fmt.Printf("[INFO] Processing username %s for chat %d\n", username, chatID)
+			// Сброс состояния
+			waitingForUsername[chatID] = false
 
-                media, message, err := fetchMediaLinks(username)
-                if err != nil {
-                    fmt.Printf("[ERROR] Failed to fetch media for %s: %v\n", username, err)
-                    sendQueue <- func() {
-                        bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Error: %v", err)))
-                    }
-                    return
-                }
+			// Отправляем "Please wait"
+			bot.Send(tgbotapi.NewMessage(chatID, "Please wait"))
 
-                if message != "" {
-                    fmt.Printf("[INFO] Message for %s: %s\n", username, message)
-                    sendQueue <- func() {
-                        bot.Send(tgbotapi.NewMessage(chatID, message))
-                    }
-                    return
-                }
+			// Получение медиа
+			media, err := fetchMediaLinks(username, bot, chatID)
+			if err != nil {
+				bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("[ERROR] %v", err)))
+				continue
+			}
 
-                if len(media) == 0 {
-                    fmt.Println("[INFO] No media found for", username)
-                    sendQueue <- func() {
-                        bot.Send(tgbotapi.NewMessage(chatID, "Media not found"))
-                    }
-                    return
-                }
+			if len(media) == 0 {
+				continue // Ничего не отправляем
+			}
 
-                folder := username
-                for i, item := range media {
-                    url := item["url"]
-                    mtype := item["type"]
-                    ext := "jpg"
-                    if mtype == "video" {
-                        ext = "mp4"
-                    }
-                    filename := fmt.Sprintf("%d.%s", i+1, ext)
-                    fmt.Printf("[INFO] Downloading %s to %s/%s\n", url, folder, filename)
-                    if err := saveFile(url, folder, filename); err != nil {
-                        fmt.Printf("[ERROR] Failed to download %s: %v\n", url, err)
-                        sendQueue <- func() {
-                            bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Failed to download %s", url)))
-                        }
-                    }
-                }
+			// Создание папки для сохранения файлов
+			folder := username
+			var mediaFiles []interface{} // Для фото и видео
 
-                fmt.Printf("[INFO] Sending media for %s to chat %d\n", username, chatID)
-                sendMedia(bot, chatID, folder)
-            }(chatID, username)
+			for i, item := range media {
+				url := item["url"]
+				mtype := item["type"]
+				ext := "jpg"
+				if mtype == "video" {
+					ext = "mp4"
+				}
+				filename := fmt.Sprintf("%d.%s", i+1, ext)
 
-            continue
-        }
-        // --- Если пользователь пишет что-то без /view ---
-        fmt.Printf("[INFO] Invalid command from chat %d: %s\n", chatID, text)
-        bot.Send(tgbotapi.NewMessage(chatID, "First use the /view command and then enter username."))
-    }
+				// Процесс скачивания в фоне
+				if err := saveFile(url, folder, filename); err != nil {
+					log.Printf("[DEBUG] Failed to download %s: %v", url, err)
+					continue
+				}
+
+				filePath := filepath.Join(folder, filename)
+
+				// Проверка размера файла (ограничение Telegram: 50 МБ)
+				fileInfo, err := os.Stat(filePath)
+				if err != nil || fileInfo.Size() > 50*1024*1024 {
+					log.Printf("[DEBUG] File %s is too large or inaccessible", filename)
+					continue
+				}
+
+				// Добавление файла в медиагруппу
+				if mtype == "image" {
+					mediaFiles = append(mediaFiles, tgbotapi.NewInputMediaPhoto(tgbotapi.FilePath(filePath)))
+				} else if mtype == "video" {
+					mediaFiles = append(mediaFiles, tgbotapi.NewInputMediaVideo(tgbotapi.FilePath(filePath)))
+				}
+			}
+
+			// Отправка медиагруппы
+			if len(mediaFiles) > 0 {
+				mediaGroup := tgbotapi.NewMediaGroup(chatID, mediaFiles)
+				_, err := bot.SendMediaGroup(mediaGroup)
+				if err != nil {
+					bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("[ERROR] Failed to send media: %v", err)))
+				} else {
+					bot.Send(tgbotapi.NewMessage(chatID, "Done."))
+				}
+			}
+
+			// Удаление папки
+			if err := os.RemoveAll(folder); err != nil {
+				log.Printf("Failed to remove folder %s: %v", folder, err)
+			}
+		}
+	}
 }
-
-
-
