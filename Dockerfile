@@ -33,11 +33,12 @@ WORKDIR /app
 RUN npm install -g playwright@1.50.1 \
     && npx playwright@1.50.1 install --with-deps chromium
 
-# Установка playwright-go CLI
-RUN go install github.com/playwright-community/playwright-go/cmd/playwright@latest
+# Установка playwright-go CLI (версия, совместимая с 1.50.1)
+RUN go install github.com/playwright-community/playwright-go/cmd/playwright@v0.5001.0 \
+    && playwright-go install
 
 # Копируем собранный Go бинарь
 COPY --from=builder /app/storeygo /app/storeygo
 
-# Запуск бота
-CMD ["/app/storeygo"]
+# Запуск бота с токеном из переменной окружения
+CMD ["/app/storeygo", "-token", "${TELEGRAM_TOKEN}"]
