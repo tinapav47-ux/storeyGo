@@ -37,7 +37,6 @@ func getRandomUserAgent() string {
 
 // validateInstagramUsername проверяет, соответствует ли username правилам Instagram
 func validateInstagramUsername(username string) bool {
-	// Instagram username: 1-30 символов, только латинские буквы, цифры, подчёркивания и точки
 	regex := regexp.MustCompile(`^[a-zA-Z0-9._]{1,30}$`)
 	return regex.MatchString(username) && !strings.ContainsAny(username, " ")
 }
@@ -106,7 +105,6 @@ func fetchMediaLinks(username string, bot *tgbotapi.BotAPI, chatID int64) ([]map
 		return nil, err
 	}
 
-	// Проверка на текст в div.tab-content > p.text-center
 	textEl, err := page.WaitForSelector("div.tab-content p.text-center", playwright.PageWaitForSelectorOptions{
 		Timeout: playwright.Float(5000),
 	})
@@ -140,7 +138,6 @@ func fetchMediaLinks(username string, bot *tgbotapi.BotAPI, chatID int64) ([]map
 			continue
 		}
 
-		// Обработка видео
 		mediaBlock, _ := mediaBox.QuerySelector(".media")
 		if mediaBlock != nil {
 			btn, _ := mediaBlock.QuerySelector(`button[aria-label="Play video"]`)
@@ -167,7 +164,6 @@ func fetchMediaLinks(username string, bot *tgbotapi.BotAPI, chatID int64) ([]map
 			}
 		}
 
-		// Обработка картинки
 		imgEl, _ := mediaBox.QuerySelector("img")
 		if imgEl != nil {
 			src, _ := imgEl.GetAttribute("src")
@@ -194,13 +190,23 @@ func main() {
 		log.Fatal("Error: Telegram Bot Token is required. Use -token flag.")
 	}
 
-	// Инициализация Telegram-бота
-	bot, err := tgbotapi.NewBotAPI(*tokenPtr)
-	if err != nil {
-		log.Fatalf("[ERROR] Failed to initialize Telegram bot: %v", err)
+	// Инициализация Telegram-бота с повторными попытками
+	var bot *tgbotapi.BotAPI
+	var err error
+	for i := 0; i < 5; i++ {
+		log.Printf("[INFO] Attempting to initialize Telegram bot (attempt %d/5)...", i+1)
+		bot, err = tgbotapi.NewBotAPI(*tokenPtr)
+		if err == nil {
+			break
+		}
+		log.Printf("[ERROR] Failed to initialize Telegram bot: %v, retrying in 5 seconds...", err)
+		time.Sleep(5 * time.Second)
 	}
-	bot.Debug = false // Отключить отладочный режим
+	if err != nil {
+		log.Fatalf("[ERROR] Failed to initialize Telegram bot after 5 attempts: %v", err)
+	}
 
+	bot.Debug = true // Включаем отладку
 	log.Printf("[INFO] Bot %s started", bot.Self.UserName)
 
 	// Настройка обновлений
