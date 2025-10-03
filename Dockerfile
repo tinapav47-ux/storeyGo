@@ -12,9 +12,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o storeygo main.go
 # ----------- Stage 2: Runtime -----------
 FROM ubuntu:22.04
 
-# Устанавливаем зависимости для Playwright и работы приложений
+# Устанавливаем базовые зависимости + xz-utils для распаковки Node.js
 RUN apt-get update && apt-get install -y \
-    wget curl ca-certificates bash coreutils \
+    wget curl ca-certificates bash coreutils xz-utils \
     fonts-freefont-ttf libnss3 libxss1 libasound2 libxtst6 libgtk-3-0 libgbm-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -28,7 +28,7 @@ RUN curl -fsSL https://nodejs.org/dist/v18.20.1/node-v18.20.1-linux-arm64.tar.xz
 # Проверка версий (опционально)
 RUN node -v && npm -v
 
-# Playwright браузеры будут установлены в эту папку
+# Переменная для Playwright браузеров
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 WORKDIR /app
@@ -41,8 +41,8 @@ RUN npm install -g playwright@1.50.1 \
 RUN go install github.com/playwright-community/playwright-go/cmd/playwright@v0.5001.0 \
     && /root/go/bin/playwright install
 
-# Копируем Go бинарь из билд-этапа
+# Копируем собранный Go бинарь
 COPY --from=builder /app/storeygo /app/storeygo
 
-# Запуск бота с токеном из переменной окружения (shell form для подстановки)
+# Используем shell form для подстановки переменной
 CMD /app/storeygo -token $TELEGRAM_TOKEN
