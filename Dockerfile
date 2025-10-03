@@ -20,6 +20,10 @@ RUN apt-get update && apt-get install -y \
     fonts-freefont-ttf libnss3 libxss1 libasound2 libxtst6 libgtk-3-0 libgbm-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Устанавливаем Go
+RUN curl -fsSL https://go.dev/dl/go1.22.8.linux-arm64.tar.gz | tar -C /usr/local -xz
+ENV PATH=$PATH:/usr/local/go/bin
+
 # Устанавливаем Node.js
 RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
     && apt-get install -y nodejs
