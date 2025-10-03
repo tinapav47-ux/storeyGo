@@ -105,16 +105,8 @@ func fetchMediaLinks(username string, bot *tgbotapi.BotAPI, chatID int64) ([]map
 		return nil, err
 	}
 
-	// Исправлено: добавлен playwright.Float(10000) и лог ошибки
-if err := page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
-    State:   playwright.WaitUntilStateNetworkidle,
-    Timeout: playwright.Float(10000),
-}); err != nil {
-    log.Printf("[DEBUG] WaitForLoadState error for username %s: %v", username, err)
-}
-
 	textEl, err := page.WaitForSelector("div.tab-content p.text-center", playwright.PageWaitForSelectorOptions{
-		Timeout: playwright.Float(5000),
+		Timeout: playwright.Float(10000),
 	})
 	if err != nil {
 		// таймаут — элемента нет, продолжаем
@@ -123,6 +115,7 @@ if err := page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
 		message = strings.TrimSpace(message)
 		if message != "" {
 			bot.Send(tgbotapi.NewMessage(chatID, message)) // Сообщение от сайта
+			bot.Send(tgbotapi.NewMessage(chatID, "No stories found"))
 			return nil, nil
 		}
 	}
@@ -190,6 +183,7 @@ if err := page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
 }
 
 func main() {
+	// Парсинг токена из флага командной строки
 	tokenPtr := flag.String("token", "", "Telegram Bot Token")
 	flag.Parse()
 
@@ -197,6 +191,7 @@ func main() {
 		log.Fatal("Error: Telegram Bot Token is required. Use -token flag.")
 	}
 
+	// Инициализация Telegram-бота с повторными попытками
 	var bot *tgbotapi.BotAPI
 	var err error
 	for i := 0; i < 5; i++ {
@@ -212,13 +207,16 @@ func main() {
 		log.Fatalf("[ERROR] Failed to initialize Telegram bot after 5 attempts: %v", err)
 	}
 
-	bot.Debug = true
+	bot.Debug = true // Включаем отладку
 	log.Printf("[INFO] Bot %s started", bot.Self.UserName)
 
+	// Настройка обновлений
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
+
 	updates := bot.GetUpdatesChan(u)
 
+	// Карта для хранения состояния ожидания username
 	waitingForUsername := make(map[int64]bool)
 
 	for update := range updates {
@@ -229,22 +227,29 @@ func main() {
 		chatID := update.Message.Chat.ID
 		username := strings.TrimSpace(update.Message.Text)
 
+		// Проверка команды /view
 		if update.Message.Text == "/view" {
 			waitingForUsername[chatID] = true
 			bot.Send(tgbotapi.NewMessage(chatID, "Sent username:"))
 			continue
 		}
 
+		// Если бот ожидает username
 		if waitingForUsername[chatID] {
+			// Проверка формата username
 			if !validateInstagramUsername(username) {
 				bot.Send(tgbotapi.NewMessage(chatID, "Invalid username format. Use only Latin letters, numbers, underscores, and dots."))
 				waitingForUsername[chatID] = false
 				continue
 			}
 
+			// Сброс состояния
 			waitingForUsername[chatID] = false
+
+			// Отправляем "Please wait"
 			bot.Send(tgbotapi.NewMessage(chatID, "Please wait"))
 
+			// Получение медиа
 			media, err := fetchMediaLinks(username, bot, chatID)
 			if err != nil {
 				bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("[ERROR] %v", err)))
@@ -252,11 +257,12 @@ func main() {
 			}
 
 			if len(media) == 0 {
-				continue
+				continue // Ничего не отправляем
 			}
 
+			// Создание папки для сохранения файлов
 			folder := username
-			var mediaFiles []interface{}
+			var mediaFiles []interface{} // Для фото и видео
 
 			for i, item := range media {
 				url := item["url"]
@@ -267,18 +273,22 @@ func main() {
 				}
 				filename := fmt.Sprintf("%d.%s", i+1, ext)
 
+				// Процесс скачивания в фоне
 				if err := saveFile(url, folder, filename); err != nil {
 					log.Printf("[DEBUG] Failed to download %s: %v", url, err)
 					continue
 				}
 
 				filePath := filepath.Join(folder, filename)
+
+				// Проверка размера файла (ограничение Telegram: 50 МБ)
 				fileInfo, err := os.Stat(filePath)
 				if err != nil || fileInfo.Size() > 50*1024*1024 {
 					log.Printf("[DEBUG] File %s is too large or inaccessible", filename)
 					continue
 				}
 
+				// Добавление файла в медиагруппу
 				if mtype == "image" {
 					mediaFiles = append(mediaFiles, tgbotapi.NewInputMediaPhoto(tgbotapi.FilePath(filePath)))
 				} else if mtype == "video" {
@@ -286,20 +296,21 @@ func main() {
 				}
 			}
 
+			// Отправка медиагруппы
 			if len(mediaFiles) > 0 {
 				mediaGroup := tgbotapi.NewMediaGroup(chatID, mediaFiles)
 				_, err := bot.SendMediaGroup(mediaGroup)
 				if err != nil {
 					bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("[ERROR] Failed to send media: %v", err)))
-					continue
+				} else {
+					bot.Send(tgbotapi.NewMessage(chatID, "Done."))
 				}
-				bot.Send(tgbotapi.NewMessage(chatID, "Done."))
 			}
 
+			// Удаление папки
 			if err := os.RemoveAll(folder); err != nil {
 				log.Printf("Failed to remove folder %s: %v", folder, err)
 			}
 		}
 	}
 }
-
