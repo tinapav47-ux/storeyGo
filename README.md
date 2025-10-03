@@ -46,9 +46,10 @@ docker build -t storeygo .
 ```
 
 5. Запустить контейнер заново с токеном
-```docker run -d --name storeygo \
-  -e TELEGRAM_TOKEN="TOKEN" \
-  storeygo
+```
+docker run -d --name storeygo \
+-e TELEGRAM_TOKEN="TOKEN" \
+storeygo
 ```
 6. Смотреть логи (убедиться, что бот запустился)
 ```
@@ -76,4 +77,5 @@ docker logs -f storeygo
 - Исходно бот был на Python и потреблял много ресурсов.
 - Переписанный на Go бот показывает меньшую нагрузку и позволяет изучать производительность.
 - Docker обеспечивает изоляцию и упрощает запуск на Raspberry Pi.
+
 
