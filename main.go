@@ -104,10 +104,9 @@ func fetchMediaLinks(username string, bot *tgbotapi.BotAPI, chatID int64) ([]map
 	}
 
 	// Ожидание полной загрузки страницы (networkidle — когда нет сетевых запросов)
-	err = page.WaitForLoadState("networkidle", &playwright.PageWaitForLoadStateOptions{
+	if err := page.WaitForLoadState("networkidle", playwright.PageWaitForLoadStateOptions{
 		Timeout: playwright.Float(10000), // 10 секунд
-	})
-	if err != nil {
+	}); err != nil {
 		log.Printf("[DEBUG] WaitForLoadState timeout for username %s: %v", username, err)
 		// Продолжаем выполнение
 	}
