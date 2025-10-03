@@ -123,7 +123,6 @@ func fetchMediaLinks(username string, bot *tgbotapi.BotAPI, chatID int64) ([]map
 		Timeout: playwright.Float(float64(timeoutWait.Milliseconds())),
 	}); err != nil {
 				bot.Send(tgbotapi.NewMessage(chatID, "No stories found"))
-					bot.Send(tgbotapi.NewMessage(chatID, message)) // Сообщение от сайта
 		return nil, nil // Медиа не найдено 
 	}
 
@@ -315,3 +314,4 @@ func main() {
 		}
 	}
 }
+
