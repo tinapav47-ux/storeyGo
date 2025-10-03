@@ -27,7 +27,7 @@ var userAgents = []string{
 const (
 	baseSite    = "https://insta-stories.ru"
 	timeoutGoto = 30 * time.Second
-	timeoutWait = 10 * time.Second
+	timeoutWait = 15 * time.Second // Увеличено для видео
 )
 
 func getRandomUserAgent() string {
@@ -45,27 +45,25 @@ func saveFile(url, folder, filename string) error {
 	if err := os.MkdirAll(folder, os.ModePerm); err != nil {
 		return err
 	}
-
 	client := &http.Client{Timeout: 60 * time.Second}
-	req, _ := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
 	req.Header.Set("User-Agent", getRandomUserAgent())
-
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("bad status: %s", resp.Status)
 	}
-
 	out, err := os.Create(filepath.Join(folder, filename))
 	if err != nil {
 		return err
 	}
 	defer out.Close()
-
 	_, err = io.Copy(out, resp.Body)
 	return err
 }
@@ -105,25 +103,38 @@ func fetchMediaLinks(username string, bot *tgbotapi.BotAPI, chatID int64) ([]map
 		return nil, err
 	}
 
+	// Ожидание полной загрузки страницы (networkidle — когда нет сетевых запросов)
+	if err := page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
+		State:   playwright.String("networkidle"),
+		Timeout: playwright.Float(10000), // 10 секунд
+	}); err != nil {
+		log.Printf("[DEBUG] WaitForLoadState timeout for username %s: %v", username, err)
+		// Продолжаем выполнение
+	}
+
+	// Проверка на сообщение "У пользователя нет историй" (таймаут 10 сек)
 	textEl, err := page.WaitForSelector("div.tab-content p.text-center", playwright.PageWaitForSelectorOptions{
-		Timeout: playwright.Float(10000),
+		Timeout: playwright.Float(10000), // 10 секунд
 	})
 	if err != nil {
-		// таймаут — элемента нет, продолжаем
+		log.Printf("[DEBUG] No text-center element found for username %s: %v", username, err)
 	} else if textEl != nil {
 		message, _ := textEl.InnerText()
 		message = strings.TrimSpace(message)
 		if message != "" {
 			bot.Send(tgbotapi.NewMessage(chatID, message)) // Сообщение от сайта
 			return nil, nil
+		} else {
+			log.Printf("[DEBUG] Text-center element found but empty for username %s", username)
 		}
 	}
 
+	// Проверка на наличие историй
 	if _, err := page.WaitForSelector(".story", playwright.PageWaitForSelectorOptions{
 		Timeout: playwright.Float(float64(timeoutWait.Milliseconds())),
 	}); err != nil {
-		bot.Send(tgbotapi.NewMessage(chatID, "No stories found"))
-		return nil, nil // Медиа не найдено — ничего не отправляем
+		bot.Send(tgbotapi.NewMessage(chatID, "У пользователя нет историй"))
+		return nil, nil // Медиа не найдено
 	}
 
 	stories, err := page.QuerySelectorAll(".story")
@@ -134,49 +145,80 @@ func fetchMediaLinks(username string, bot *tgbotapi.BotAPI, chatID int64) ([]map
 
 	var found []map[string]string
 	for i, story := range stories {
-		mediaBox, _ := story.QuerySelector(".mediaBox")
-		if mediaBox == nil {
+		mediaBox, err := story.QuerySelector(".mediaBox")
+		if err != nil || mediaBox == nil {
+			log.Printf("[DEBUG] No mediaBox found for story %d: %v", i+1, err)
 			continue
 		}
 
-		mediaBlock, _ := mediaBox.QuerySelector(".media")
-		if mediaBlock != nil {
-			btn, _ := mediaBlock.QuerySelector(`button[aria-label="Play video"]`)
-			if btn != nil {
-				btn.Click(playwright.ElementHandleClickOptions{Force: playwright.Bool(true)})
-				page.WaitForTimeout(5000)
-			}
+		mediaBlock, err := mediaBox.QuerySelector(".media")
+		if err != nil || mediaBlock == nil {
+			log.Printf("[DEBUG] No mediaBlock found for story %d: %v", i+1, err)
+			continue
+		}
 
-			sourceEl, _ := mediaBlock.QuerySelector(`source[type="video/mp4"]`)
-			if sourceEl == nil {
-				sourceEl, _ = story.QuerySelector(`source[type="video/mp4"]`)
+		// Попытка клика на кнопку воспроизведения
+		btn, err := mediaBlock.QuerySelector(`button[aria-label="Play video"]`)
+		if err != nil {
+			log.Printf("[DEBUG] No play button found for story %d: %v", i+1, err)
+		} else if btn != nil {
+			if err := btn.Click(playwright.ElementHandleClickOptions{Force: playwright.Bool(true)}); err != nil {
+				log.Printf("[DEBUG] Failed to click play button for story %d: %v", i+1, err)
+			} else {
+				log.Printf("[DEBUG] Clicked play button for story %d", i+1)
+				page.WaitForTimeout(5000) // Ожидание загрузки видео
 			}
+		}
 
-			if sourceEl != nil {
-				src, _ := sourceEl.GetAttribute("src")
-				if src != "" {
-					found = append(found, map[string]string{
-						"type":       "video",
-						"url":        src,
-						"storyIndex": fmt.Sprintf("%d", i+1),
-					})
-					continue
+		// Поиск видео
+		sourceEl, err := mediaBlock.QuerySelector(`source[type="video/mp4"]`)
+		if err != nil || sourceEl == nil {
+			log.Printf("[DEBUG] No video source found in mediaBlock for story %d: %v", i+1, err)
+			sourceEl, err = story.QuerySelector(`source[type="video/mp4"]`)
+			if err != nil || sourceEl == nil {
+				log.Printf("[DEBUG] No video source found in story for story %d: %v", i+1, err)
+				// Альтернативный селектор для видео
+				sourceEl, err = story.QuerySelector(`video source`)
+				if err != nil || sourceEl == nil {
+					log.Printf("[DEBUG] No video source found with alternative selector for story %d: %v", i+1, err)
 				}
 			}
 		}
 
-		imgEl, _ := mediaBox.QuerySelector("img")
-		if imgEl != nil {
-			src, _ := imgEl.GetAttribute("src")
-			if src != "" {
+		if sourceEl != nil {
+			src, err := sourceEl.GetAttribute("src")
+			if err != nil || src == "" {
+				log.Printf("[DEBUG] No valid video src for story %d: %v", i+1, err)
+			} else {
+				log.Printf("[DEBUG] Found video for story %d: %s", i+1, src)
 				found = append(found, map[string]string{
-					"type":       "image",
+					"type":       "video",
 					"url":        src,
 					"storyIndex": fmt.Sprintf("%d", i+1),
 				})
 				continue
 			}
 		}
+
+		// Поиск изображения
+		imgEl, err := mediaBox.QuerySelector("img")
+		if err != nil || imgEl == nil {
+			log.Printf("[DEBUG] No image found for story %d: %v", i+1, err)
+			continue
+		}
+
+		src, err := imgEl.GetAttribute("src")
+		if err != nil || src == "" {
+			log.Printf("[DEBUG] No valid image src for story %d: %v", i+1, err)
+			continue
+		}
+
+		log.Printf("[DEBUG] Found image for story %d: %s", i+1, src)
+		found = append(found, map[string]string{
+			"type":       "image",
+			"url":        src,
+			"storyIndex": fmt.Sprintf("%d", i+1),
+		})
 	}
 
 	return found, nil
@@ -186,7 +228,6 @@ func main() {
 	// Парсинг токена из флага командной строки
 	tokenPtr := flag.String("token", "", "Telegram Bot Token")
 	flag.Parse()
-
 	if *tokenPtr == "" {
 		log.Fatal("Error: Telegram Bot Token is required. Use -token flag.")
 	}
@@ -213,7 +254,6 @@ func main() {
 	// Настройка обновлений
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
-
 	updates := bot.GetUpdatesChan(u)
 
 	// Карта для хранения состояния ожидания username
@@ -256,14 +296,17 @@ func main() {
 				continue
 			}
 
+			// Если медиа не найдено, отправляем сообщение
 			if len(media) == 0 {
-				continue // Ничего не отправляем
+				bot.Send(tgbotapi.NewMessage(chatID, "У пользователя нет историй"))
+				continue
 			}
 
 			// Создание папки для сохранения файлов
 			folder := username
 			var mediaFiles []interface{} // Для фото и видео
 
+			// Скачивание файлов
 			for i, item := range media {
 				url := item["url"]
 				mtype := item["type"]
@@ -273,7 +316,7 @@ func main() {
 				}
 				filename := fmt.Sprintf("%d.%s", i+1, ext)
 
-				// Процесс скачивания в фоне
+				// Скачивание
 				if err := saveFile(url, folder, filename); err != nil {
 					log.Printf("[DEBUG] Failed to download %s: %v", url, err)
 					continue
@@ -285,6 +328,7 @@ func main() {
 				fileInfo, err := os.Stat(filePath)
 				if err != nil || fileInfo.Size() > 50*1024*1024 {
 					log.Printf("[DEBUG] File %s is too large or inaccessible", filename)
+					os.Remove(filePath) // Удаляем большой файл
 					continue
 				}
 
@@ -309,9 +353,8 @@ func main() {
 
 			// Удаление папки
 			if err := os.RemoveAll(folder); err != nil {
-				log.Printf("Failed to remove folder %s: %v", folder, err)
+				log.Printf("[DEBUG] Failed to remove folder %s: %v", folder, err)
 			}
 		}
 	}
 }
-
