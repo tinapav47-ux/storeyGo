@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y \
 
 # Устанавливаем Go
 RUN curl -fsSL https://go.dev/dl/go1.22.8.linux-arm64.tar.gz | tar -C /usr/local -xz
-ENV PATH=$PATH:/usr/local/go/bin
+ENV PATH=$PATH:/usr/local/go/bin:/root/go/bin
 
 # Устанавливаем Node.js
 RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
@@ -39,7 +39,7 @@ RUN npm install -g playwright@1.50.1 \
 
 # Установка playwright-go CLI (версия, совместимая с 1.50.1)
 RUN go install github.com/playwright-community/playwright-go/cmd/playwright@v0.5001.0 \
-    && playwright-go install
+    && /root/go/bin/playwright install
 
 # Копируем собранный Go бинарь
 COPY --from=builder /app/storeygo /app/storeygo
