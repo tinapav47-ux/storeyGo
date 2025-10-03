@@ -104,12 +104,12 @@ func fetchMediaLinks(username string, bot *tgbotapi.BotAPI, chatID int64) ([]map
 	}
 
 	// Ожидание полной загрузки страницы (networkidle — когда нет сетевых запросов)
-	if err := page.WaitForLoadState("networkidle", playwright.PageWaitForLoadStateOptions{
-		Timeout: playwright.Float(10000), // 10 секунд
-	}); err != nil {
-		log.Printf("[DEBUG] WaitForLoadState timeout for username %s: %v", username, err)
-		// Продолжаем выполнение
-	}
+if err := page.WaitForLoadState(playwright.WaitUntilStateNetworkidle, &playwright.PageWaitForLoadStateOptions{
+    Timeout: playwright.Float(10000),
+}); err != nil {
+    log.Printf("[DEBUG] WaitForLoadState timeout for username %s: %v", username, err)
+}
+
 
 	// Проверка на сообщение "У пользователя нет историй" (увеличен таймаут до 10 сек)
 	textEl, err := page.WaitForSelector("div.tab-content p.text-center", playwright.PageWaitForSelectorOptions{
@@ -329,3 +329,4 @@ func main() {
 		}
 	}
 }
+
