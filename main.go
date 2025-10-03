@@ -25,7 +25,7 @@ var userAgents = []string{
 }
 
 const (
-	baseSite  = "https://insta-stories.ru"
+	baseSite    = "https://insta-stories.ru"
 	timeoutGoto = 30 * time.Second
 	timeoutWait = 15 * time.Second // Увеличено для стабильности
 )
@@ -104,9 +104,10 @@ func fetchMediaLinks(username string, bot *tgbotapi.BotAPI, chatID int64) ([]map
 	}
 
 	// Ожидание полной загрузки страницы (networkidle — когда нет сетевых запросов)
-	if _, err := page.WaitForLoadState(playwright.LoadStateNetworkidle, playwright.PageWaitForLoadStateOptions{
+	err = page.WaitForLoadState("networkidle", playwright.PageWaitForLoadStateOptions{
 		Timeout: playwright.Float(10000), // 10 секунд
-	}); err != nil {
+	})
+	if err != nil {
 		log.Printf("[DEBUG] WaitForLoadState timeout for username %s: %v", username, err)
 		// Продолжаем выполнение
 	}
